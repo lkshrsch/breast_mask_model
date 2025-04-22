@@ -12,4 +12,12 @@ SCAN_PATH = '/Path/to/T1_scan.nii' # Input mri has to be in nifty format. Can be
 
 MODEL_PATH = '/models/breast_mask_model.h5'
 
+**Output**
+
+ypred = numpy array with probabilities per voxel for belonging to breast tissue.
+
+mask = processed output after binarization (threshold 0.5), keeping largest connected component and performing morphological closing.
+
+Example using 'Breast_MRI_002' obtained from public dataset released by Duke University (https://sites.duke.edu/mazurowski/resources/breast-cancer-mri-dataset/)
+
 ![Demo result](/figures/demo_result.png)
