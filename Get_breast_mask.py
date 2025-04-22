@@ -12,6 +12,8 @@ import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
 from skimage.transform import resize
+from skimage import measure
+from scipy.ndimage import binary_dilation, binary_erosion, generate_binary_structure
 
 GPU = 0
 import tensorflow as tf
@@ -36,7 +38,7 @@ elif tf.__version__[0] == '2':
 
 VISUALIZE = True
 
-SCAN_PATH = '/Path/to/T1_scan.nii'
+SCAN_PATH = '/Path/to/T1_scan.nii' # Can be sagittal or axial
 
 MODEL_PATH = '/models/breast_mask_model.h5'
 
@@ -110,6 +112,42 @@ def get_breast_mask(SCAN_PATH, breastMask_model):
         
     return breaskMask
     
+def keep_largest_component_and_fill_holes(volume, dilation_iters=3):
+    """
+    Keep only the largest connected component in a 3D binary volume,
+    and fill internal holes using morphological closing (dilation then erosion).
+    
+    Parameters:
+        volume (ndarray): 3D binary input volume.
+        dilation_iters (int): Number of iterations for dilation and erosion.
+    
+    Returns:
+        ndarray: Cleaned 3D binary volume.
+    """
+    # Label all connected components
+    labeled = measure.label(volume, connectivity=3)
+    props = measure.regionprops(labeled)
+    
+    if not props:
+        return np.zeros_like(volume, dtype=bool)
+    
+    # Identify the largest component
+    largest_label = props[np.argmax([p.area for p in props])].label
+    largest_component = (labeled == largest_label)
+
+    # Define 3D structuring element (26-connectivity)
+    structure = generate_binary_structure(3, 2)
+
+    # Morphological closing to fill holes: dilation followed by erosion
+    closed = largest_component.copy()
+    for _ in range(dilation_iters):
+        closed = binary_dilation(closed, structure=structure)
+    for _ in range(dilation_iters):
+        closed = binary_erosion(closed, structure=structure)
+
+    return closed
+
+#%%
 
 if __name__ == "__main__":
     
@@ -118,24 +156,34 @@ if __name__ == "__main__":
                                      'dice_coef_multilabel_bin1':dice_coef_multilabel_bin1}
     
     
-    
+    print(f'Loading model from: {MODEL_PATH}')
     breastMask_model = tf.keras.models.load_model(MODEL_PATH, custom_objects = my_custom_objects)
     
+    print(f'Running inference on scan at: {SCAN_PATH}')
     ypred = get_breast_mask(SCAN_PATH, breastMask_model)
+    
+    mask = ypred > 0.5
+    
+    print('Post-processing mask..')
+    mask = keep_largest_component_and_fill_holes(mask, dilation_iters=3)
 
     if VISUALIZE:
         img = nib.load(SCAN_PATH).get_fdata()
+        img = resize(img, output_shape=(img.shape[0],256,256), preserve_range=True, anti_aliasing=True, mode='reflect')   
+       
+        SLICE = img.shape[0]//4
         
-        SLICE = img.shape[0]//2
-        
-        plt.figure(figsize=(15,5))
-        plt.subplot(131); plt.title('Input image')
+        plt.figure(figsize=(8,8))
+        plt.subplot(221); plt.title('Input image')
         plt.imshow(img[SLICE], cmap='gray'); plt.xticks([]); plt.yticks([])
 
-        plt.subplot(132); plt.title('Model prediction')
+        plt.subplot(222); plt.title('Model prediction')
         plt.imshow(ypred[SLICE], cmap='gray'); plt.xticks([]); plt.yticks([])
 
+        plt.subplot(223); plt.title('Resulting breast mask')
+        plt.imshow(mask[SLICE], cmap='gray'); plt.xticks([]); plt.yticks([])
 
-        plt.subplot(133); plt.title('Masked Image')
-        breastMask = ypred > 0.75
-        plt.imshow(breastMask[SLICE]*img[SLICE], cmap='gray'); plt.xticks([]); plt.yticks([])
+
+        plt.subplot(224); plt.title('Masked Input Image')
+        
+        plt.imshow(mask[SLICE]*img[SLICE], cmap='gray'); plt.xticks([]); plt.yticks([])
